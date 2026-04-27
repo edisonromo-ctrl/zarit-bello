@@ -29,12 +29,11 @@ sheet = client.open("Zarit_Cuidadores_Bello").sheet1
 # FUNCIONES
 # =====================================
 def obtener_codigo():
-    datos = sheet.get_all_values()
-    if len(datos) <= 1:
+    data = sheet.col_values(2)
+    if len(data) <= 1:
         return "C001"
     try:
-        ultimo = datos[-1][1]
-        numero = int(ultimo.replace("C", ""))
+        numero = int(data[-1].replace("C", ""))
         return f"C{numero+1:03d}"
     except:
         return "C001"
@@ -45,6 +44,32 @@ def clasificar(p):
     elif p <= 55:
         return "Sobrecarga leve"
     return "Sobrecarga intensa"
+
+def generar_alerta(puntaje, horas_dia, tiempo_cuidado):
+    alerta = "🟢 Baja"
+    color = "#2e7d32"
+    mensaje = "Sin riesgo clínico relevante."
+
+    if puntaje >= 56:
+        alerta = "🔴 Alta"
+        color = "#c62828"
+        mensaje = "Sobrecarga intensa. Requiere intervención."
+    elif puntaje >= 47:
+        alerta = "🟡 Media"
+        color = "#f9a825"
+        mensaje = "Riesgo de sobrecarga."
+
+    if horas_dia == "Más de 12":
+        alerta = "🔴 Alta"
+        color = "#c62828"
+        mensaje = "Sobrecarga crítica por tiempo de cuidado."
+
+    if tiempo_cuidado == "Más de 3 años":
+        alerta = "🔴 Alta"
+        color = "#c62828"
+        mensaje = "Fatiga del cuidador a largo plazo."
+
+    return alerta, color, mensaje
 
 def cargar_base():
     data = sheet.get_all_values()
@@ -62,15 +87,10 @@ modo = st.sidebar.radio("Modo", ["Aplicación", "Administrador"])
 # =====================================
 if modo == "Aplicación":
 
-    st.title("Test de Zarit - Bello")
+    st.title("Test de Zarit")
 
     codigo = obtener_codigo()
-
-    st.markdown(f"""
-    <div style="background:#eef6ff;padding:15px;border-radius:10px">
-    <b>Código asignado:</b> {codigo}
-    </div>
-    """, unsafe_allow_html=True)
+    st.info(f"Código asignado: {codigo}")
 
     OPCIONES = {
         "Nunca": 0,
@@ -105,26 +125,23 @@ if modo == "Aplicación":
         "Sobrecarga general"
     ]
 
-    with st.form("form", clear_on_submit=True):
+    with st.form("formulario", clear_on_submit=True):
 
         col1, col2 = st.columns(2)
 
         with col1:
             edad = st.number_input("Edad", 18, 120)
             sexo = st.selectbox("Sexo", ["Femenino", "Masculino", "Otro"])
-            parentesco = st.selectbox(
-                "Parentesco",
-                ["Hija/o", "Esposa/o", "Madre/padre", "Hermana/o", "Otro", "No familiar"]
+            parentesco = st.selectbox("Parentesco",
+                ["Hija/o","Esposa/o","Madre/padre","Hermana/o","Otro","No familiar"]
             )
 
         with col2:
-            tiempo = st.selectbox(
-                "Tiempo de cuidado",
-                ["<6 meses", "6-12 meses", "1-3 años", ">3 años"]
+            tiempo = st.selectbox("Tiempo de cuidado",
+                ["Menos de 6 meses","6 meses a 1 año","1 a 3 años","Más de 3 años"]
             )
-            horas = st.selectbox(
-                "Horas al día",
-                ["<4", "4-8", "8-12", ">12"]
+            horas = st.selectbox("Horas al día",
+                ["Menos de 4","4 a 8","8 a 12","Más de 12"]
             )
             barrio = st.text_input("Barrio")
 
@@ -146,6 +163,12 @@ if modo == "Aplicación":
         puntaje = sum(respuestas)
         clasif = clasificar(puntaje)
 
+        alerta, color_alerta, mensaje_alerta = generar_alerta(
+            puntaje,
+            horas,
+            tiempo
+        )
+
         sheet.append_row([
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             codigo,
@@ -155,21 +178,20 @@ if modo == "Aplicación":
             tiempo,
             horas,
             barrio,
+            *respuestas,
             puntaje,
-            clasif
+            clasif,
+            alerta
         ])
 
         st.markdown(f"""
-        <div style="background:#e3f2fd;border:3px solid #1565c0;
-        padding:25px;border-radius:12px">
-
+        <div style='padding:20px;border-radius:10px;background:{color_alerta};color:white'>
         <h2>Encuesta finalizada</h2>
-        <h3>Código: {codigo}</h3>
-        <h3>Puntaje: {puntaje}</h3>
-        <h3>Clasificación: {clasif}</h3>
-
-        <p>Puede continuar con el siguiente cuidador.</p>
-
+        <b>Código:</b> {codigo}<br>
+        <b>Puntaje:</b> {puntaje}<br>
+        <b>Clasificación:</b> {clasif}<br>
+        <b>Alerta:</b> {alerta}<br><br>
+        {mensaje_alerta}
         </div>
         """, unsafe_allow_html=True)
 
@@ -178,24 +200,29 @@ if modo == "Aplicación":
 # =====================================
 else:
 
-    st.title("Panel de resultados")
+    st.title("Panel clínico")
 
     df = cargar_base()
 
     if df.empty:
-        st.info("Sin datos")
+        st.warning("Sin datos")
     else:
 
         df["puntaje"] = pd.to_numeric(df["puntaje"], errors="coerce")
 
         col1, col2, col3 = st.columns(3)
 
-        col1.metric("Registros", len(df))
+        col1.metric("Total", len(df))
         col2.metric("Promedio", round(df["puntaje"].mean(),2))
-        col3.metric("Máximo", df["puntaje"].max())
+        col3.metric("Alto riesgo %",
+            round((df["clasif"]=="Sobrecarga intensa").mean()*100,1)
+        )
 
         st.subheader("Clasificación")
         st.bar_chart(df["clasif"].value_counts())
+
+        st.subheader("Alertas")
+        st.bar_chart(df["alerta"].value_counts())
 
         st.subheader("Puntajes")
         st.line_chart(df["puntaje"])
@@ -205,11 +232,3 @@ else:
 
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("Descargar CSV", csv, "zarit.csv")
-
-        if st.button("Reiniciar base"):
-            sheet.clear()
-            sheet.append_row([
-                "fecha","codigo","edad","sexo","parentesco",
-                "tiempo","horas","barrio","puntaje","clasif"
-            ])
-            st.success("Base reiniciada")
